@@ -47,6 +47,18 @@ def evaluate(model: nn.Module, n: int, num_samples: int = 256):
     return token_acc, exact, per_pos
 
 
+class Bigram(nn.Module):
+    def __init__(self, d_model: int = 64):
+        super().__init__()
+        self.emb = nn.Embedding(VOCAB_SIZE, d_model)
+        self.head = nn.Linear(d_model, VOCAB_SIZE)
+
+    def forward(self, idx: torch.Tensor) -> torch.Tensor:
+        x = self.emb(idx)
+        logits = self.head(x)
+        return logits
+
+
 class SingleHeadAttention(nn.Module):
     def __init__(self, d_model: int, d_head: int):
         super().__init__()
@@ -64,25 +76,48 @@ class SingleHeadAttention(nn.Module):
         scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_head)
 
         T = x.size(1)
-        mask = torch.tril(torch.ones(T, T, dtype=torch.bool, device=x.device))
-        scores = scores.masked_fill(~mask, float("-inf"))
-        
+        mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores = scores.masked_fill(mask, float("-inf"))
+
         weights = F.softmax(scores, dim=-1)
         attn_output = weights @ v
 
         return self.out_proj(attn_output)
 
 
-class Bigram(nn.Module):
-    def __init__(self, d_model: int = 64):
+class MultiHeadAttention(nn.Module):
+    def __init__(self, d_model: int, n_head: int):
         super().__init__()
-        self.emb = nn.Embedding(VOCAB_SIZE, d_model)
-        self.head = nn.Linear(d_model, VOCAB_SIZE)
+        assert d_model % n_head == 0
+        self.n_heads = n_head
+        self.d_head = d_model // n_head
 
-    def forward(self, idx: torch.Tensor) -> torch.Tensor:
-        x = self.emb(idx)
-        logits = self.head(x)
-        return logits
+        self.q_proj = nn.Linear(d_model, d_model, bias=False)
+        self.k_proj = nn.Linear(d_model, d_model, bias=False)
+        self.v_proj = nn.Linear(d_model, d_model, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, C = x.shape
+
+        q = self.q_proj(x).view(B, T, self.n_heads, self.d_head).transpose(1, 2)
+        k = self.k_proj(x).view(B, T, self.n_heads, self.d_head).transpose(1, 2)
+        v = self.v_proj(x).view(B, T, self.n_heads, self.d_head).transpose(1, 2)
+
+        scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_head)
+
+        mask = torch.triu(
+            torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+        )
+        scores = scores.masked_fill(mask, float("-inf"))
+
+        weights = F.softmax(scores, dim=-1)
+        attn_output = weights @ v
+
+        attn_output = attn_output.transpose(1, 2).contiguous().view(B, T, C)
+        return self.out_proj(attn_output)
 
 
 if __name__ == "__main__":
