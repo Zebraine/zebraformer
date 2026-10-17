@@ -27,6 +27,24 @@ def answer_loss(logits: torch.Tensor, targets: torch.Tensor, n: int) -> torch.Te
     return F.cross_entropy(logits.reshape(-1, VOCAB_SIZE), targets.reshape(-1))
 
 
+@torch.no_grad()
+def evaluate(model: nn.Module, n: int, num_samples: int = 256):
+    model.eval()
+
+    g = torch.Generator().manual_seed(1234)
+    x = torch.randint(0, DIGITS, (num_samples, n), generator=g)
+    full = make_sequences(x)
+
+    logits: torch.Tensor = model(full[:, :-1])
+    pred = logits[:, n : 2 * n + 1].argmax(dim=-1)
+    target = full[:, 1:][:, n : 2 * n + 1]
+
+    token_acc = (pred == target).float().mean().item()
+    exact = (pred == target).all(dim=1).float().mean().item()
+    per_pos = (pred == target).float().mean(dim=0)
+    return token_acc, exact, per_pos
+
+
 class Bigram(nn.Module):
     def __init__(self, d_model: int = 64):
         super().__init__()
@@ -40,15 +58,29 @@ class Bigram(nn.Module):
 
 
 if __name__ == "__main__":
+    torch.manual_seed(0)
+
     n = 8
+    batch_size = 64
+    steps = 500
 
     g = torch.Generator().manual_seed(0)
-    xb, yb = make_batch(2, n, g)
-
     model = Bigram()
-    logits: torch.Tensor = model(xb)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-3)
 
-    print("logits shape:", logits.shape)
-    print("target:", yb[:, n : 2 * n + 1].tolist())
-    print("loss:", answer_loss(logits, yb, n).item())
-    print("params:", sum(p.numel() for p in model.parameters()))
+    for step in range(1, steps + 1):
+        xb, yb = make_batch(batch_size, n, g)
+
+        logits = model(xb)
+        loss = answer_loss(logits, yb, n)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if step % 50 == 0:
+            print(f"step {step}: loss {loss.item():.4f}")
+
+    token_acc, exact, per_pos = evaluate(model, n)
+    print(f"token acc: {token_acc:.4f}, exact: {exact:.4f}")
+    print(f"per pos: {per_pos}")
