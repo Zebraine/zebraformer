@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.autograd.profiler import log
 
 DIGITS = 10
 BOS = 10
@@ -119,6 +120,7 @@ class MultiHeadAttention(nn.Module):
         attn_output = attn_output.transpose(1, 2).contiguous().view(B, T, C)
         return self.out_proj(attn_output)
 
+
 class Block(nn.Module):
     def __init__(self, d_model: int, n_head: int):
         super().__init__()
@@ -138,30 +140,67 @@ class Block(nn.Module):
         return x
 
 
+class Zebraformer(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        block_size: int,
+        d_model: int = 64,
+        n_head: int = 4,
+        n_layer: int = 2,
+    ):
+        super().__init__()
+
+        self.block_size = block_size
+
+        self.tok_emb = nn.Embedding(vocab_size, d_model)
+        self.pos_emb = nn.Embedding(block_size, d_model)
+
+        self.blocks = nn.ModuleList([Block(d_model, n_head) for _ in range(n_layer)])
+        self.ln_f = nn.LayerNorm(d_model)
+        self.head = nn.Linear(d_model, vocab_size, bias=False)
+
+        self.apply(self._init_weights)
+
+    @staticmethod
+    def _init_weights(module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx: torch.Tensor) -> torch.Tensor:
+        B, T = idx.shape
+
+        if T > self.block_size:
+            raise ValueError(
+                f"Cannot forward sequence of length {T}, block size is only {self.block_size}"
+            )
+
+        pos = torch.arange(T, device=idx.device)
+        x = self.tok_emb(idx) + self.pos_emb(pos)
+
+        for block in self.blocks:
+            x = block(x)
+
+        x = self.ln_f(x)
+        logits = self.head(x)
+
+        return logits
+
+
 if __name__ == "__main__":
     torch.manual_seed(0)
 
     n = 8
-    batch_size = 64
-    steps = 500
-
     g = torch.Generator().manual_seed(0)
-    model = Bigram()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-3)
+    xb, yb = make_batch(2, n, g)
 
-    for step in range(1, steps + 1):
-        xb, yb = make_batch(batch_size, n, g)
+    model = Zebraformer(VOCAB_SIZE, block_size=2 * n + 2)
+    logits = model(xb)
 
-        logits = model(xb)
-        loss = answer_loss(logits, yb, n)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        if step % 50 == 0:
-            print(f"step {step}: loss {loss.item():.4f}")
-
-    token_acc, exact, per_pos = evaluate(model, n)
-    print(f"token acc: {token_acc:.4f}, exact: {exact:.4f}")
-    print(f"per pos: {per_pos}")
+    print("logits shape:", logits.shape)
+    print("初始 loss:", round(answer_loss(logits, yb, n).item(), 4))
+    print("参数量:", sum(p.numel() for p in model.parameters()))
