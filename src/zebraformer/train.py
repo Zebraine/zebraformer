@@ -62,6 +62,11 @@ class SingleHeadAttention(nn.Module):
         v = self.v_proj(x)
 
         scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_head)
+
+        T = x.size(1)
+        mask = torch.tril(torch.ones(T, T, dtype=torch.bool, device=x.device))
+        scores = scores.masked_fill(~mask, float("-inf"))
+        
         weights = F.softmax(scores, dim=-1)
         attn_output = weights @ v
 
