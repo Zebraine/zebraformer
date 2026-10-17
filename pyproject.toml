@@ -1,7 +1,7 @@
 [project]
 name = "zebraformer"
 version = "0.1.0"
-description = "Add your description here"
+description = "A minimal implementation of Transformer in pure Python."
 readme = "README.md"
 authors = [
     { name = "Zebraine", email = "zebrainee@gmail.com" }
