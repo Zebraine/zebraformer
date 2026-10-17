@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -43,6 +45,27 @@ def evaluate(model: nn.Module, n: int, num_samples: int = 256):
     exact = (pred == target).all(dim=1).float().mean().item()
     per_pos = (pred == target).float().mean(dim=0)
     return token_acc, exact, per_pos
+
+
+class SingleHeadAttention(nn.Module):
+    def __init__(self, d_model: int, d_head: int):
+        super().__init__()
+        self.d_head = d_head
+        self.q_proj = nn.Linear(d_model, d_head, bias=False)
+        self.k_proj = nn.Linear(d_model, d_head, bias=False)
+        self.v_proj = nn.Linear(d_model, d_head, bias=False)
+        self.out_proj = nn.Linear(d_head, d_model, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+
+        scores = q @ k.transpose(-2, -1) / math.sqrt(self.d_head)
+        weights = F.softmax(scores, dim=-1)
+        attn_output = weights @ v
+
+        return self.out_proj(attn_output)
 
 
 class Bigram(nn.Module):
