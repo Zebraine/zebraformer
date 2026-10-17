@@ -20,6 +20,13 @@ def make_batch(batch_size: int, n: int, generator: torch.Generator):
     full = make_sequences(x)
     return full[:, :-1], full[:, 1:]
 
+
+def answer_loss(logits: torch.Tensor, targets: torch.Tensor, n: int) -> torch.Tensor:
+    logits = logits[:, n : 2 * n + 1]
+    targets = targets[:, n : 2 * n + 1]
+    return F.cross_entropy(logits.reshape(-1, VOCAB_SIZE), targets.reshape(-1))
+
+
 class Bigram(nn.Module):
     def __init__(self, d_model: int = 64):
         super().__init__()
@@ -31,13 +38,17 @@ class Bigram(nn.Module):
         logits = self.head(x)
         return logits
 
+
 if __name__ == "__main__":
+    n = 8
+
     g = torch.Generator().manual_seed(0)
-    xb, yb = make_batch(2, 8, g)
+    xb, yb = make_batch(2, n, g)
 
     model = Bigram()
     logits: torch.Tensor = model(xb)
 
     print("logits shape:", logits.shape)
-    print("loss:", F.cross_entropy(logits.reshape(-1, VOCAB_SIZE), yb.reshape(-1)).item())
+    print("target:", yb[:, n : 2 * n + 1].tolist())
+    print("loss:", answer_loss(logits, yb, n).item())
     print("params:", sum(p.numel() for p in model.parameters()))
